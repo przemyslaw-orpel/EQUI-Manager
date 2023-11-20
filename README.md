@@ -1,0 +1,1 @@
+# EQUI-Manager
