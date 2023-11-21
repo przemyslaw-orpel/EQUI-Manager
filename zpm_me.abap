@@ -7,29 +7,37 @@
 *&---------------------------------------------------------------------*
 report zpm_me.
 
-data: s100_ok   type syst_ucomm.
+data: s100_ok   type syst_ucomm. "screen 100 element
 
 class lc_gui_screen definition.
   public section.
     class-data:
-    screen type ref to lc_gui_screen.
+    screen type ref to lc_gui_screen. "Singleton
     class-methods:
       create_screen.
     methods:
       constructor,
+      create_splitter,
       create_tplnr_alv_tree,
       select_tplnr_data,
       init_alv_tree,
       create_nodes,
       hide_column_tree,
-      set_column_settings,
+      set_tree_col_settings,
+      set_tree_handler,
       create_equi_alv,
-      on_link_click  for event double_click of cl_salv_events_tree importing node_key.
+      create_alv,
+      set_alv_handler,
+      set_color_col,
+      refresh_equi_alv,
+      select_equi_data,
+      on_tree_click  for event double_click of cl_salv_events_tree importing node_key,
+      on_equnr_click for event link_click of cl_salv_events_table importing row.
   private section.
 
     types: begin of ty_tree_tab,
-             node_key    type i,  "tplnr
-             node_parent type i,  "tplma
+             node_key    type i,  "tplnr key
+             node_parent type i,  "tplma key
              tplnr       type tplnr,
              pltxt       type pltxt,
            end of ty_tree_tab,
@@ -43,14 +51,15 @@ class lc_gui_screen definition.
            end of ty_equi_view.
 
     data:
-      gt_equi          type standard table of ty_equi_view,
+      gt_equi          type table of ty_equi_view,
+      gt_tree_init     type table of ty_tree_tab,
+      gt_tree          type table of ty_tree_tab,
       gr_alv           type ref to cl_salv_table,
       gr_left_cont     type ref to cl_gui_container,
       gr_right_cont    type ref to cl_gui_container,
       gr_splitter      type ref to cl_gui_splitter_container,
       gr_alv_tree      type ref to cl_salv_tree,
-      gt_tree_init     type table of ty_tree_tab,
-      gt_tree          type table of ty_tree_tab,
+      gv_sel_tplnr     type string,
       gv_expand_icon   type salv_de_tree_image,
       gv_collapse_icon type salv_de_tree_image,
       gv_hier_icon     type salv_de_tree_image.
@@ -59,17 +68,7 @@ endclass.
 
 class lc_gui_screen implementation.
   method constructor.
-    " Set splitter
-    gr_splitter = new #( parent = cl_gui_container=>default_screen
-                         rows = 1
-                         columns = 2 ).
-
-    " Set left side container
-    gr_left_cont = gr_splitter->get_container( row = 1
-                                               column = 1 ).
-    "Set right side container
-    gr_right_cont = gr_splitter->get_container( row = 1
-                                                column = 2 ).
+    me->create_splitter( ).
     me->create_tplnr_alv_tree( ).
     me->create_equi_alv( ).
 
@@ -77,8 +76,21 @@ class lc_gui_screen implementation.
 
   method create_screen.
     if screen is initial.
-      screen = new lc_gui_screen( ).
+      screen = new #( ).
     endif.
+  endmethod.
+
+  method create_splitter.
+    " Create splitter instance
+    gr_splitter = new #( parent = cl_gui_container=>default_screen
+                         rows = 1
+                         columns = 2 ).
+    " Set left side container
+    gr_left_cont = gr_splitter->get_container( row = 1
+                                               column = 1 ).
+    "Set right side container
+    gr_right_cont = gr_splitter->get_container( row = 1
+                                                column = 2 ).
   endmethod.
 
   method create_tplnr_alv_tree.
@@ -86,33 +98,20 @@ class lc_gui_screen implementation.
     me->init_alv_tree( ).
     me->create_nodes( ).
     me->hide_column_tree( ).
-    me->set_column_settings( ).
-
-    data(lo_event) = gr_alv_tree->get_event( ).
-    set handler me->on_link_click for lo_event.
+    me->set_tree_col_settings( ).
+    me->set_tree_handler( ).
 
     " Set toolbar
     gr_alv_tree->get_functions( )->set_all( ).
 
     " Show alv tree
     gr_alv_tree->display( ).
-
   endmethod.
 
   method create_equi_alv.
-    " Create ALV instance
-    try.
-        cl_salv_table=>factory(
-          exporting
-         r_container = gr_right_cont
-         importing
-           r_salv_table = gr_alv
-           changing
-             t_table = gt_equi
-        ).
-      catch cx_salv_error into data(gx_alv_error).
-        message gx_alv_error->get_text( ) type 'E'.
-    endtry.
+    me->create_alv( ).
+    me->set_color_col( ).
+    me->set_alv_handler( ).
 
     " Set toolbar
     gr_alv->get_functions( )->set_all( ).
@@ -180,6 +179,7 @@ class lc_gui_screen implementation.
   endmethod.
 
   method init_alv_tree.
+    me->create_alv( ).
     " Create ALV Tree instance
     try.
         cl_salv_tree=>factory(
@@ -188,10 +188,10 @@ class lc_gui_screen implementation.
           importing
             r_salv_tree = gr_alv_tree
             changing
-              t_table = gt_tree_init
+              t_table = gt_tree_init  " must be empty
               ).
-      catch cx_salv_error into data(gx_alv_error).
-        message gx_alv_error->get_text( ) type 'E'.
+      catch cx_salv_error into data(lx_alv_error).
+        message lx_alv_error->get_text( ) type 'E'.
     endtry.
   endmethod.
 
@@ -230,10 +230,9 @@ class lc_gui_screen implementation.
                                    text           = | { <fs_line>-tplnr }| ).
           endif.
         endloop.
-      catch cx_salv_msg into data(gx_alv_error).
-        message gx_alv_error->get_text( ) type 'E'.
+      catch cx_salv_msg into data(lx_alv_error).
+        message lx_alv_error->get_text( ) type 'E'.
     endtry.
-
   endmethod.
 
   method hide_column_tree.
@@ -242,44 +241,114 @@ class lc_gui_screen implementation.
         lo_tree_col->get_column( 'NODE_KEY' )->set_visible( abap_false ).
         lo_tree_col->get_column( 'NODE_PARENT' )->set_visible( abap_false ).
         lo_tree_col->get_column( 'TPLNR' )->set_visible( abap_false ).
-      catch cx_salv_not_found into data(gx_alv_error).
-        message gx_alv_error->get_text( ) type 'E'.
+      catch cx_salv_not_found into data(lx_alv_error).
+        message lx_alv_error->get_text( ) type 'E'.
     endtry.
   endmethod.
 
-  method set_column_settings.
+  method set_tree_col_settings.
     data(lr_setting) = gr_alv_tree->get_tree_settings( ).
     lr_setting->set_hierarchy_header( 'TPLNR TREE' ).
     lr_setting->set_hierarchy_size( 40 ).
     lr_setting->set_hierarchy_icon( gv_hier_icon ).
   endmethod.
 
-  method on_link_click.
+  method set_tree_handler.
+    "Set double click handler
+    data(lo_event) = gr_alv_tree->get_event( ).
+    set handler me->on_tree_click for lo_event.
+  endmethod.
+
+  method on_tree_click.
     " Rename parametr node key
-    data(key) = node_key.
-
+    data(lv_key) = node_key.
     " Read tplnr from node
-    read table gt_tree with key node_key = key into data(lv_tree_row).
-
+    read table gt_tree with key node_key = lv_key into data(lv_tree_row).
     " Serch tplnr
-    data(lv_stplnr) =  |{ lv_tree_row-tplnr }{ '%' } |.
+    gv_sel_tplnr =  |{ lv_tree_row-tplnr }{ '%' } |.
+    " Set alv equi header
+    gr_alv->get_display_settings( )->set_list_header( | { lv_tree_row-tplnr } - { lv_tree_row-pltxt } | ).
 
+    me->refresh_equi_alv( ).
+  endmethod.
+
+  method refresh_equi_alv.
+    clear gt_equi.
+    " Select alv data
+    me->select_equi_data( ).
+    " Refresh alv
+    gr_alv->refresh( ).
+    " Optimize column width
+    gr_alv->get_columns( )->set_optimize( ).
+  endmethod.
+
+  method select_equi_data.
     " Fill equipment table
     select * from equi
       join equz on equz~equnr = equi~equnr
       join iloa on iloa~iloan = equz~iloan
       join iflot on iloa~tplnr = iflot~tplnr
       join eqkt on equi~equnr = eqkt~equnr
-      where iloa~tplnr like @lv_stplnr
+      where iloa~tplnr like @gv_sel_tplnr
+      order by equi~equnr
       into corresponding fields of table @gt_equi.
-
-    " Refresh alv
-    gr_alv->refresh( ).
-
-    " Optimize column width
-    gr_alv->get_columns( )->set_optimize( ).
   endmethod.
 
+  method create_alv.
+    " Create ALV instance
+    try.
+        cl_salv_table=>factory(
+          exporting
+         r_container = gr_right_cont
+         importing
+           r_salv_table = gr_alv
+           changing
+             t_table = gt_equi
+        ).
+      catch cx_salv_error into data(lx_alv_error).
+        message lx_alv_error->get_text( ) type 'E'.
+    endtry.
+  endmethod.
+
+  method set_color_col.
+    try.
+        data(lr_equnr_col) = cast cl_salv_column_table(
+        gr_alv->get_columns( )->get_column( 'EQUNR' ) ).
+
+        lr_equnr_col->set_key( abap_false ).
+        lr_equnr_col->set_color( value #( col = col_total ) ). "Like yellow"
+
+      catch cx_salv_not_found into data(lx_column_error).
+        message lx_column_error->get_text( ) type 'E'.
+    endtry.
+  endmethod.
+
+  method set_alv_handler.
+    "Set column hotspot
+    try.
+        data(lr_equnr_col) = cast cl_salv_column_table(
+         gr_alv->get_columns( )->get_column( 'EQUNR' ) ).
+
+        lr_equnr_col->set_cell_type( if_salv_c_cell_type=>hotspot ).
+      catch cx_salv_not_found into data(lx_column_error).
+        message lx_column_error->get_text( ) type 'E'.
+    endtry.
+
+    "Register handler
+    data(lr_event) = gr_alv->get_event( ).
+    set handler me->on_equnr_click for lr_event.
+  endmethod.
+
+  method on_equnr_click.
+    "Read equnr
+    read table gt_equi into data(lv_row_equi) index row.
+
+    " Open IE03 transaction with EQUNR parametr
+    set parameter id: 'EQN' field lv_row_equi-equnr.
+    call transaction 'IE03' and skip first screen.
+
+    me->refresh_equi_alv( ).
+  endmethod.
 endclass.
 
 
@@ -308,5 +377,4 @@ module user_command_0100 input.
     when 'EXIT'.
       leave program.
   endcase.
-
 endmodule.
