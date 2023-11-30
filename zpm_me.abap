@@ -32,7 +32,8 @@ class lc_gui_screen definition.
       refresh_equi_alv,
       select_equi_data,
       on_tree_click  for event double_click of cl_salv_events_tree importing node_key,
-      on_equnr_click for event link_click of cl_salv_events_table importing row.
+      on_equnr_click for event link_click of cl_salv_events_table importing row sender,
+      on_user_command for event added_function of  cl_salv_events importing e_salv_function.
   private section.
 
     types: begin of ty_tree_tab,
@@ -115,6 +116,18 @@ class lc_gui_screen implementation.
 
     " Set toolbar
     gr_alv->get_functions( )->set_all( ).
+
+    " Add printer buton
+    try.
+        gr_alv->get_functions( )->add_function(
+               name = 'PRINTEQUI'
+               icon =  conv string( icon_print )
+               text = 'Print equi'
+               tooltip = 'Print equipment'
+               position = if_salv_c_function_position=>right_of_salv_functions ).
+      catch cx_salv_existing cx_salv_wrong_call into data(lx_alv_error).
+        message lx_alv_error->get_text( ) type 'E'.
+    endtry.
 
     " Show alv
     gr_alv->display( ).
@@ -330,6 +343,7 @@ class lc_gui_screen implementation.
          gr_alv->get_columns( )->get_column( 'EQUNR' ) ).
 
         lr_equnr_col->set_cell_type( if_salv_c_cell_type=>hotspot ).
+
       catch cx_salv_not_found into data(lx_column_error).
         message lx_column_error->get_text( ) type 'E'.
     endtry.
@@ -337,6 +351,7 @@ class lc_gui_screen implementation.
     "Register handler
     data(lr_event) = gr_alv->get_event( ).
     set handler me->on_equnr_click for lr_event.
+    set handler me->on_user_command for lr_event.
   endmethod.
 
   method on_equnr_click.
@@ -349,6 +364,34 @@ class lc_gui_screen implementation.
 
     me->refresh_equi_alv( ).
   endmethod.
+
+  method on_user_command.
+    data(lv_sel_row) = gr_alv->get_selections( )->get_selected_rows( ).
+    " Check user select equi row
+    if lv_sel_row is initial.
+      message 'Please selecet equimpnet row' type 'I'.
+    else.
+      " Read selected row index
+      read table lv_sel_row into data(lv_row) index 1.
+      " Read equi line
+      read table gt_equi into data(ls_equi) index lv_row.
+
+      " In my case smart form impor equnr and print details about equimpent
+      call function '' "Set smart forms function
+        exporting
+          lv_equnr         = ls_equi-equnr
+        exceptions
+          formatting_error = 1
+          internal_error   = 2
+          send_error       = 3
+          user_canceled    = 4
+          others           = 5.
+      if sy-subrc <> 0.
+        message 'Printer error' type 'E'.
+      endif.
+    endif.
+  endmethod.
+
 endclass.
 
 
