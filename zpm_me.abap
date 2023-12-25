@@ -16,7 +16,9 @@ class lc_gui_screen definition.
     class-methods:
       create_screen.
     methods:
-      constructor,
+      constructor.
+  private section.
+    methods:
       create_splitter,
       create_tplnr_alv_tree,
       select_tplnr_data,
@@ -31,10 +33,11 @@ class lc_gui_screen definition.
       set_color_col,
       refresh_equi_alv,
       select_equi_data,
+      add_buttons,
+      show_bom importing iv_equnr type equnr,
       on_tree_click  for event double_click of cl_salv_events_tree importing node_key,
       on_equnr_click for event link_click of cl_salv_events_table importing row sender,
       on_user_command for event added_function of  cl_salv_events importing e_salv_function.
-  private section.
 
     types: begin of ty_tree_tab,
              node_key    type i,  "tplnr key
@@ -104,7 +107,6 @@ class lc_gui_screen implementation.
 
     " Set toolbar
     gr_alv_tree->get_functions( )->set_all( ).
-
     " Show alv tree
     gr_alv_tree->display( ).
   endmethod.
@@ -113,22 +115,10 @@ class lc_gui_screen implementation.
     me->create_alv( ).
     me->set_color_col( ).
     me->set_alv_handler( ).
+    me->add_buttons( ).
 
     " Set toolbar
     gr_alv->get_functions( )->set_all( ).
-
-    " Add printer buton
-    try.
-        gr_alv->get_functions( )->add_function(
-               name = 'PRINTEQUI'
-               icon =  conv string( icon_print )
-               text = 'Print equi'
-               tooltip = 'Print equipment'
-               position = if_salv_c_function_position=>right_of_salv_functions ).
-      catch cx_salv_existing cx_salv_wrong_call into data(lx_alv_error).
-        message lx_alv_error->get_text( ) type 'E'.
-    endtry.
-
     " Show alv
     gr_alv->display( ).
   endmethod.
@@ -365,6 +355,68 @@ class lc_gui_screen implementation.
     me->refresh_equi_alv( ).
   endmethod.
 
+  method add_buttons.
+    try.
+        " Add printer buton
+        gr_alv->get_functions( )->add_function(
+               name = 'PRINTEQUI'
+               icon =  conv string( icon_print )
+               text = 'Print equi'
+               tooltip = 'Print equipment'
+               position = if_salv_c_function_position=>right_of_salv_functions ).
+        " Add bom buton
+        gr_alv->get_functions( )->add_function(
+             name = 'SHOWBOM'
+             icon =  conv string( icon_bom )
+             text = 'BOM'
+             tooltip = 'Equipment BOMs'
+             position = if_salv_c_function_position=>right_of_salv_functions ).
+      catch cx_salv_existing cx_salv_wrong_call into data(lx_alv_error).
+        message lx_alv_error->get_text( ) type 'E'.
+    endtry.
+  endmethod.
+
+  method show_bom.
+    constants: lc_spras type spras value 'L', "Polish
+               lc_stlty type stlty value 'E'. "Equipment material specification
+    types: begin of ty_bom_view,
+             posnr type sposn,
+             postp type postp,
+             idnrk type idnrk,
+             maktx type maktx,
+             datuv type datuv,
+             meins type kmpme,
+             menge type kmpmg,
+           end of ty_bom_view.
+    data: lt_bom type standard table of ty_bom_view,
+          lo_alv type ref to cl_salv_table.
+
+    " Select BOM data
+    select * from eqst
+    join stpo on stpo~stlnr = eqst~stlnr
+    join makt on makt~matnr = stpo~idnrk
+      where eqst~equnr = @iv_equnr
+      and makt~spras = @lc_spras
+      and stpo~stlty = @lc_stlty
+      into corresponding fields of table @lt_bom.
+
+    "  Create ALV instance
+    try.
+        cl_salv_table=>factory(
+          importing
+             r_salv_table = lo_alv
+           changing
+             t_table = lt_bom  ).
+      catch cx_salv_msg into data(lx_error).
+        message lx_error->get_text( ) type 'E'.
+    endtry.
+
+    " Set ALV Popup
+    lo_alv->set_screen_popup( start_column = 30 start_line = 1 end_column = 130 end_line = 30 ).
+    " Display popup
+    lo_alv->display( ).
+  endmethod.
+
   method on_user_command.
     data(lv_sel_row) = gr_alv->get_selections( )->get_selected_rows( ).
     " Check user select equi row
@@ -376,22 +428,27 @@ class lc_gui_screen implementation.
       " Read equi line
       read table gt_equi into data(ls_equi) index lv_row.
 
-      " In my case smart form impor equnr and print details about equimpent
-      call function '' "Set smart forms function
-        exporting
-          lv_equnr         = ls_equi-equnr
-        exceptions
-          formatting_error = 1
-          internal_error   = 2
-          send_error       = 3
-          user_canceled    = 4
-          others           = 5.
-      if sy-subrc <> 0.
-        message 'Printer error' type 'E'.
-      endif.
+      case e_salv_function.
+        when 'PRINTEQUI'.
+          " In my case smart form impor equnr and print details about equimpent
+          call function '' "Set smart forms function
+            exporting
+              lv_equnr         = ls_equi-equnr
+            exceptions
+              formatting_error = 1
+              internal_error   = 2
+              send_error       = 3
+              user_canceled    = 4
+              others           = 5.
+          if sy-subrc <> 0.
+            message 'Printer error' type 'E'.
+          endif.
+
+        when 'SHOWBOM'.
+          me->show_bom( iv_equnr = ls_equi-equnr ).
+      endcase.
     endif.
   endmethod.
-
 endclass.
 
 
